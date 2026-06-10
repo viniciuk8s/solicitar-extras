@@ -16,9 +16,13 @@
  *    4. Devolve JSON com resultado de cada criação
  *
  *  Configuração necessária (arquivo .env):
- *    CLICKUP_TOKEN   — API Token pessoal (pk_...)
- *    CLICKUP_LIST_ID — ID da lista onde as tarefas serão criadas
- *    PORT            — (opcional) porta do servidor, padrão 3000
+ *    CLICKUP_TOKEN    — API Token pessoal (pk_...)
+ *    CLICKUP_LIST_ID  — ID da lista onde as tarefas serão criadas
+ *    ALLOWED_ORIGINS  — domínios do front-end separados por vírgula
+ *                       (ex.: https://leverefeicoes.com.br,http://leverefeicoes.com.br)
+ *    API_KEY          — (opcional) chave compartilhada; se definida, o front
+ *                       precisa enviar o header "x-api-key" com o mesmo valor
+ *    PORT             — (opcional) porta do servidor, padrão 3000
  * ─────────────────────────────────────────────────────────────────────────────
  */
  
@@ -37,18 +41,32 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .map(o => o.trim())
   .filter(Boolean);
 
+// Chave compartilhada simples (opcional). Se definida no .env, toda requisição
+// ao POST /api/solicitacao precisa enviar o header "x-api-key" com este valor.
+// Se não definida, a verificação é ignorada (não bloqueia).
+const API_KEY = process.env.API_KEY;
+
 app.use(cors({
   origin: (origin, callback) => {
     // Permite requisições sem origin (ex: Postman, curl, health checks)
     if (!origin) return callback(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    callback(new Error(`CORS bloqueado para origem: ${origin}`));
+    // Rejeita de forma limpa: o navegador bloqueia, mas sem stack trace no log
+    console.warn(`[CORS] Origem bloqueada: ${origin}`);
+    callback(null, false);
   },
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
+  allowedHeaders: ["Content-Type", "x-api-key"],
 }));
 
 app.use(express.json());
+
+// Middleware de autorização por chave compartilhada
+function requireApiKey(req, res, next) {
+  if (!API_KEY) return next(); // não configurado → não bloqueia
+  if (req.get("x-api-key") === API_KEY) return next();
+  return res.status(401).json({ success: false, erro: "Não autorizado." });
+}
 
  
 // ─── CONFIG CLICKUP ──────────────────────────────────────────────────────────
@@ -57,6 +75,7 @@ const CU_LIST_ID = process.env.CLICKUP_LIST_ID;
  
 const clickup = axios.create({
   baseURL: "https://api.clickup.com/api/v2",
+  timeout: 15000, // 15s — evita requisições penduradas se o ClickUp travar
   headers: {
     Authorization: CU_TOKEN,
     "Content-Type": "application/json",
@@ -68,11 +87,10 @@ const clickup = axios.create({
 //  UUIDs mapeados a partir da lista 901327002938.
 //
 //  Notas:
-//    • "Data do Serviço" existe em dois campos: um tipo date (5d7cdefb) e um
-//      short_text (da2285b2). O tipo date recebe timestamp (ms); o short_text
-//      recebe a string legível "DD/MM/YYYY".
-//    • "Unidade" (13c4fa90) é tipo labels — envia array de strings.
-//    • Campos currency (Valor, Valor do Evento) recebem centavos inteiros.
+//    • "Data do Serviço" (5d7cdefb) recebe a string legível "DD/MM/YYYY" (texto).
+//    • "Unidade" (13c4fa90) é tipo labels — envia array de UUIDs da opção.
+//    • Campos currency (Valor, Valor do Evento) recebem o valor decimal direto
+//      (ex.: 100 = R$ 100,00), NÃO centavos.
 //    • "Valor Total" (3900ec9b) é formula — só leitura, não é enviado.
 //
 const FIELD_IDS = {
@@ -143,17 +161,7 @@ const LABEL_IDS = {
   "AL - Arapiraca":     "7173051b-5bab-460c-9c62-f1d166d9e0dd",
 };
  
-/**
- * Converte data "YYYY-MM-DD" em timestamp Unix (ms) — exigido pelo ClickUp.
- */
-// ─── HELPERS (versão corrigida) ───────────────────────────────────────────────
-
-function dateToTimestamp(dateStr) {
-  if (!dateStr) return null;
-  // T12:00:00Z ancora ao meio-dia UTC — evita regressão de 1 dia em UTC-3
-  const ts = new Date(dateStr + "T12:00:00Z").getTime();
-  return isNaN(ts) ? null : ts;
-}
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 function dropdownIndex(campo, valor) {
   const map = DROPDOWN_OPTIONS[campo];
@@ -197,21 +205,14 @@ function buildCustomFields(dados, extra) {
   add(FIELD_IDS.horario,       dados.horario);
   add(FIELD_IDS.justificativa, dados.justificativa);
 
-  // ── Data do Serviço ──
-  // Campo tipo "date" recebe timestamp em ms
-  const ts = dateToTimestamp(dados.dataServico);
-  if (ts) add(FIELD_IDS.dataServico, ts);
-
-  // Campo tipo "short_text" recebe string legível DD/MM/YYYY
+  // ── Data do Serviço (texto DD/MM/YYYY) ──
   if (dados.dataServico) {
     const [y, m, d] = dados.dataServico.split("-");
-    add(FIELD_IDS.dataServicoText, `${d}/${m}/${y}`);
+    add(FIELD_IDS.dataServico, `${d}/${m}/${y}`);
   }
 
-  // ── Valor do Evento (currency → centavos inteiros) ──
-  // Só envia se for demanda tipo Evento e houver valor informado
   if (dados.tipoDemanda === "Evento" && dados.valorEvento) {
-    add(FIELD_IDS.valorEvento, Math.round(dados.valorEvento * 100));
+    add(FIELD_IDS.valorEvento, Math.round(dados.valorEvento * 100) / 100);
   }
 
   // ── Nome do profissional ──
@@ -221,8 +222,8 @@ function buildCustomFields(dados, extra) {
   const funcaoIdx = dropdownIndex("funcao", extra.funcao);
   if (funcaoIdx !== null) add(FIELD_IDS.funcao, funcaoIdx);
 
-  // ── Valor da diária (currency → centavos inteiros) ──
-  add(FIELD_IDS.valorDiaria, Math.round((extra.valorDiaria || 0) * 100));
+// ── Valor da diária (currency → valor decimal direto) ──
+add(FIELD_IDS.valorDiaria, Math.round((extra.valorDiaria || 0) * 100) / 100);
 
   // ── Quantidade de dias (number) ──
   add(FIELD_IDS.qtdDias, Number(extra.qtdDias));
@@ -334,7 +335,7 @@ app.get("/api/campos", async (req, res) => {
 });
  
 // ─── CRIAR TAREFAS (rota principal) ──────────────────────────────────────────
-app.post("/api/solicitacao", async (req, res) => {
+app.post("/api/solicitacao", requireApiKey, async (req, res) => {
   // Verificação de configuração
   if (!CU_TOKEN || !CU_LIST_ID) {
     return res.status(500).json({
