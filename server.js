@@ -216,11 +216,9 @@ function buildCustomFields(dados, extra) {
   add(FIELD_IDS.horario,       dados.horario);
   add(FIELD_IDS.justificativa, dados.justificativa);
 
-  // ── Data do Serviço (campo date 5d7cdefb → timestamp em ms) ──
-  // Confirmado via /api/campos: este campo é tipo "date", logo recebe timestamp
-  // em milissegundos (não texto). O ClickUp exibe como data formatada.
-  const ts = dateToTimestamp(dados.dataServico);
-  if (ts) add(FIELD_IDS.dataServico, ts);
+  // ── Data do Serviço ──
+  // NÃO é enviada aqui: o campo date (5d7cdefb) é setado após a criação,
+  // via endpoint dedicado de custom field, que é mais confiável para datas.
 
   if (dados.tipoDemanda === "Evento" && dados.valorEvento) {
     add(FIELD_IDS.valorEvento, Math.round(dados.valorEvento * 100) / 100);
@@ -405,6 +403,22 @@ app.post("/api/solicitacao", requireApiKey, async (req, res) => {
       const { data: task } = await clickup.post(`/list/${CU_LIST_ID}/task`, payload);
  
       console.log(`[OK]   Tarefa criada: ${task.id} — ${task.url}`);
+
+      // ── Setar a Data do Serviço (campo date) via endpoint dedicado ──
+      // Mais confiável que enviar na criação. Timestamp em ms; time:false = só data.
+      const ts = dateToTimestamp(dados.dataServico);
+      if (ts) {
+        try {
+          await clickup.post(`/task/${task.id}/field/${FIELD_IDS.dataServico}`, {
+            value: ts,
+            value_options: { time: false },
+          });
+          console.log(`[OK]   Data setada na tarefa ${task.id}`);
+        } catch (e) {
+          console.warn(`[WARN] Falha ao setar data na tarefa ${task.id}:`,
+            e.response?.data || e.message);
+        }
+      }
  
       return {
         extra:   extra.nome,
