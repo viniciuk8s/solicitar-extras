@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Solicitar Extras</title>
+  <link rel="icon" type="image/x-icon" href="src/img/iconEdaLeve.png">
+  <link rel="stylesheet" href="./src/styles/styles.css">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css">
+</head>
+<body>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <div class="hero">
+    <div class="hero-pattern"></div>
+    <div class="hero-inner">
+      <img width="250px" src="./src/img/logo.png" alt="">
+      <h1>Solicitação de <em>Extras</em></h1>
+      <p>Canal para solicitação de freelancers para eventos, coberturas ou reforço de equipe.</p>
+      <div class="hero-divider">
+        <div class="hero-divider-line"></div>
+        <div class="hero-divider-gem"></div>
+        <div class="hero-divider-line"></div>
+      </div>
+    </div>
+  </div>
+
+  <main class="page-body">
+    <div class="form-card">
+
+
+      <div class="progress-strip">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+
+      <form id="formSolicitacao" novalidate>
+        <div class="form-body">
+
+
+          <section class="form-section">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24"><path d="M7 7h10M7 12h10M7 17h4"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Tipo de demanda</div>
+                <div class="section-sub">Selecione a categoria da solicitação</div>
+              </div>
+            </div>
+
+            <div class="tipo-toggle">
+              <button type="button" class="tipo-btn" id="btn-evento">
+                <span class="btn-icon"><i class="bi bi-stars"></i></span>
+                <span class="btn-label">Evento</span>
+              </button>
+              <button type="button" class="tipo-btn" id="btn-cozinha">
+                <span class="btn-icon"><i class="bi bi-fork-knife"></i></span>
+                <span class="btn-label">Cozinha</span>
+                <span class="check">
+                  <svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg>
+                </span>
+              </button>
+            </div>
+          </section>
+
+
+          <section class="form-section">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Informações gerais</div>
+                <div class="section-sub">Dados da unidade e do solicitante</div>
+              </div>
+            </div>
+
+            <div class="grid2">
+              <div class="field">
+                <label for="f-unidade"><i class="bi bi-buildings"></i> Unidade <span class="req">*</span></label>
+                <select id="f-unidade" required></select>
+              </div>
+              <div class="field">
+                <label for="solicitante"><i class="bi bi-person"></i> Solicitante <span class="req">*</span></label>
+                <input id="solicitante" type="text" placeholder="Seu nome completo" required>
+              </div>
+         
+
+         
+              <div class="field">
+                <label for="data"><i class="bi bi-calendar4"></i> Data do serviço <span class="req">*</span></label>
+                <input id="data" type="date" required>
+              </div>
+              <div class="field">
+                <label for="horario"><i class="bi bi-clock"></i> Horário <span class="req">*</span></label>
+                <input id="horario" type="text" placeholder="Ex: 08h às 17h" required>
+              </div>
+            </div>
+
+            <div class="field field-hide" id="campo-evento">
+              <label for="valor">Valor do evento (R$) <span class="opt">— opcional</span></label>
+              <input id="valor" type="text" placeholder="0,00">
+            </div>
+
+            <div class="field">
+              <label for="justificativa"><i class="bi bi-feather"></i> Justificativa <span class="req">*</span></label>
+              <textarea id="justificativa" placeholder="Descreva o motivo da solicitação, contexto e necessidades específicas…" required></textarea>
+            </div>
+          </section>
+
+
+          <section class="form-section">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </div>
+              <div style="flex:1;">
+                <div class="section-title">
+                  Profissionais extras
+                  <span class="count-badge" id="extrasCount">1</span>
+                </div>
+                <div class="section-sub">Cada profissional gera uma tarefa separada no ClickUp</div>
+              </div>
+            </div>
+
+            <div id="extras-container"></div>
+
+            <button type="button" class="btn-add" id="btn-add-extra">
+              <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Adicionar profissional
+            </button>
+          </section>
+
+        </div>
+
+
+        <div class="form-footer">
+          <div class="footer-note">
+            Ao enviar, cada extra gera uma tarefa no <strong>ClickUp</strong>.<br>
+            Campos com <span style="color:var(--gold);font-weight:500;">*</span> são obrigatórios.
+          </div>
+          <button type="submit" class="btn-submit" id="btnSubmit">
+            <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Enviar solicitação
+          </button>
+        </div>
+
+      </form>
+    </div>
+  </main>
+  <script src="src/js/app.js"></script>
+
+</body>
+</html>
