@@ -4,7 +4,7 @@ const BACKEND_URL = "https://solicitar-extras.onrender.com";
 // Chave compartilhada — DEVE ser igual à env var API_KEY no Render.
 // Atenção: por ser código de front-end, este valor fica visível no navegador.
 // Serve para filtrar abuso casual, não como segredo forte.
-const API_KEY = "TROQUE_POR_UM_VALOR_SECRETO";
+const API_KEY = "pk_118075909_D3FGBXI8950YWXTC5XMY17X0NCJZBUAN";
 
 const regioes = {
   "Rio Grande do Norte": [
@@ -314,7 +314,6 @@ document.getElementById("formSolicitacao").addEventListener("submit", async (e) 
 
 try {
   console.log("ENVIANDO:", JSON.stringify(dados, null, 2));
-
 const res = await fetch(`${BACKEND_URL}/api/solicitacao`, {
     method:  "POST",
     headers: {
