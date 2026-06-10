@@ -1,464 +1,366 @@
-/**
- * ─────────────────────────────────────────────────────────────────────────────
- *  BACKEND — Solicitação de Extras → ClickUp
- *  Leve Refeições Coletivas
- * ─────────────────────────────────────────────────────────────────────────────
- *
- *  Stack : Node.js + Express + Axios
- *  Porta : 3000 (configurável via .env → PORT)
- *
- *  Fluxo :
- *    1. Recebe POST /api/solicitacao com o payload do formulário
- *    2. Valida os dados obrigatórios
- *    3. Para cada "extra" cria uma tarefa na lista do ClickUp com:
- *         - Nome, função, valor, dias, PIX no campo da tarefa
- *         - Todos os campos custom preenchidos (incluindo dropdowns)
- *    4. Devolve JSON com resultado de cada criação
- *
- *  Configuração necessária (arquivo .env):
- *    CLICKUP_TOKEN    — API Token pessoal (pk_...)
- *    CLICKUP_LIST_ID  — ID da lista onde as tarefas serão criadas
- *    ALLOWED_ORIGINS  — domínios do front-end separados por vírgula
- *                       (ex.: https://leverefeicoes.com.br,http://leverefeicoes.com.br)
- *    API_KEY          — (opcional) chave compartilhada; se definida, o front
- *                       precisa enviar o header "x-api-key" com o mesmo valor
- *    PORT             — (opcional) porta do servidor, padrão 3000
- * ─────────────────────────────────────────────────────────────────────────────
- */
- 
-require("dotenv").config();
-const express = require("express");
-const cors    = require("cors");
-const axios   = require("axios");
- 
-const app  = express();
-const PORT = process.env.PORT || 3000;
- 
-// ─── MIDDLEWARES ─────────────────────────────────────────────────────────────
-// Lista de origens permitidas — adicione aqui todos os domínios do front-end
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
-  .split(",")
-  .map(o => o.trim())
-  .filter(Boolean);
+// ─── CONFIG ───
+// URL do backend no Render
+const BACKEND_URL = "https://solicitar-extras.onrender.com";
+// Chave compartilhada — DEVE ser igual à env var API_KEY no Render.
+// Atenção: por ser código de front-end, este valor fica visível no navegador.
+// Serve para filtrar abuso casual, não como segredo forte.
+const API_KEY = "TROQUE_POR_UM_VALOR_SECRETO";
 
-// Chave compartilhada simples (opcional). Se definida no .env, toda requisição
-// ao POST /api/solicitacao precisa enviar o header "x-api-key" com este valor.
-// Se não definida, a verificação é ignorada (não bloqueia).
-const API_KEY = process.env.API_KEY;
+const regioes = {
+  "Rio Grande do Norte": [
+    { label: "Parnamirim",   value: "RN - Parnamirim"    },
+    { label: "Caicó",        value: "RN - Caicó"         },
+    { label: "Mossoró",      value: "RN - Mossoró "      }, 
+  ],
+  "Paraíba": [
+    { label: "João Pessoa",  value: "PB - João Pessoa"   },
+  ],
+  "Pernambuco": [
+    { label: "Caruaru",      value: "PE - Caruaru"       },
+  ],
+  "Sergipe": [
+    { label: "São Cristóvão", value: "SE - São Critovão" }, 
+    { label: "Aracaju",       value: "SE - Aracaju"      },
+  ],
+  "Maranhão": [
+    { label: "São Luís",     value: "MA - São Luiz"      },
+  ],
+  "Paraná": [
+    { label: "Telêmaco Borba", value: "PR - Telemaco Borba" },
+  ],
+  "Rio Grande do Sul": [
+    { label: "Porto Alegre", value: "RS - Porto Alegre " }, 
+  ],
+  "São Paulo": [
+    { label: "São Paulo",    value: "SP - São Paulo "    }, 
+  ],
+  "Alagoas": [
+    { label: "Arapiraca",    value: "AL - Arapiraca"     },
+  ],
+};
 
-app.use(cors({
-  origin: (origin, callback) => {
-    // Permite requisições sem origin (ex: Postman, curl, health checks)
-    if (!origin) return callback(null, true);
-    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    // Rejeita de forma limpa: o navegador bloqueia, mas sem stack trace no log
-    console.warn(`[CORS] Origem bloqueada: ${origin}`);
-    callback(null, false);
-  },
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "x-api-key"],
-}));
+const funcoes = ["Garçom", "Cozinheiro", "Auxiliar de cozinha", "Nutricionista", "Motorista"];
 
-app.use(express.json());
+// ─── ELEMENTOS ───
+const selectUnidade   = document.getElementById("f-unidade");
+const extrasContainer = document.getElementById("extras-container");
+const btnAddExtra     = document.getElementById("btn-add-extra");
+const btnEvento       = document.getElementById("btn-evento");
+const btnCozinha      = document.getElementById("btn-cozinha");
+const campoEvento     = document.getElementById("campo-evento");
+const extrasCount     = document.getElementById("extrasCount");
+const progressBar     = document.getElementById("progressBar");
 
-// Middleware de autorização por chave compartilhada
-function requireApiKey(req, res, next) {
-  if (!API_KEY) return next(); // não configurado → não bloqueia
-  if (req.get("x-api-key") === API_KEY) return next();
-  return res.status(401).json({ success: false, erro: "Não autorizado." });
+let tipoDemanda = "Evento";
+let extraIndex  = 0;
+
+
+(function popularUnidades() {
+  Object.entries(regioes).forEach(([estado, cidades]) => {
+    const g = document.createElement("optgroup");
+    g.label = estado;
+    cidades.forEach(({ label, value }) => {
+      const o = document.createElement("option");
+      o.value       = value;   
+      o.textContent = label;   
+      g.appendChild(o);
+    });
+    selectUnidade.appendChild(g);
+  });
+})();
+
+// ─── TIPO DEMANDA ───
+function alterarTipo(tipo) {
+  tipoDemanda = tipo;
+  btnEvento.classList.toggle("active",  tipo === "Evento");
+  btnCozinha.classList.toggle("active", tipo === "Cozinha");
+  campoEvento.classList.toggle("field-hide", tipo !== "Evento");
 }
 
- 
-// ─── CONFIG CLICKUP ──────────────────────────────────────────────────────────
-const CU_TOKEN   = process.env.CLICKUP_TOKEN;
-const CU_LIST_ID = process.env.CLICKUP_LIST_ID;
- 
-const clickup = axios.create({
-  baseURL: "https://api.clickup.com/api/v2",
-  timeout: 15000, // 15s — evita requisições penduradas se o ClickUp travar
-  headers: {
-    Authorization: CU_TOKEN,
-    "Content-Type": "application/json",
-  },
+btnEvento.addEventListener("click",  () => alterarTipo("Evento"));
+btnCozinha.addEventListener("click", () => alterarTipo("Cozinha"));
+
+
+function gerarFuncoes() {
+  return funcoes.map(f => `<option value="${f}">${f}</option>`).join("");
+}
+
+
+function criarExtra() {
+  extraIndex++;
+  const id  = `extra-${Date.now()}-${extraIndex}`;
+  const num = extraIndex;
+
+  const card = document.createElement("div");
+  card.className = "extra-card";
+  card.dataset.extraId = id;
+
+  card.innerHTML = `
+    <div class="extra-header">
+      <div class="extra-num-wrap">
+        <div class="extra-avatar" data-avatar="${num}">E${num}</div>
+        <div>
+          <div class="extra-title" data-title>Extra ${num}</div>
+          <div class="extra-subtitle">Preencha os dados do profissional</div>
+        </div>
+      </div>
+      <button type="button" class="btn-remove" data-remove="${id}" title="Remover">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="extra-body">
+      <div class="extra-row3">
+        <div class="field">
+          <label>Nome completo <span class="req">*</span></label>
+          <input type="text" class="extra-nome" placeholder="Nome do profissional" required>
+        </div>
+        <div class="field">
+          <label>Função <span class="req">*</span></label>
+          <select class="extra-funcao" required>
+            <option value="">Selecione</option>
+            ${gerarFuncoes()}
+          </select>
+        </div>
+        <div class="field">
+          <label>Valor diária (R$) <span class="req">*</span></label>
+          <input type="number" class="extra-valor" placeholder="0.00" min="0" step="0.01" required>
+        </div>
+      </div>
+      <div class="extra-row2">
+        <div class="field">
+          <label>Quantidade de dias <span class="req">*</span></label>
+          <input type="number" class="extra-dias" min="1" value="1" required>
+        </div>
+        <div class="field">
+          <label>Chave PIX <span class="req">*</span></label>
+          <input type="text" class="extra-pix" placeholder="CPF, e-mail ou telefone" required>
+        </div>
+      </div>
+      <div class="extra-total">
+        Total estimado: <strong data-total>R$ 0,00</strong>
+      </div>
+    </div>
+  `;
+
+
+  const inputValor = card.querySelector(".extra-valor");
+  const inputDias  = card.querySelector(".extra-dias");
+  const totalEl    = card.querySelector("[data-total]");
+  const nomeInput  = card.querySelector(".extra-nome");
+  const titleEl    = card.querySelector("[data-title]");
+
+  function calcTotal() {
+    const v = parseFloat(inputValor.value || 0);
+    const d = parseInt(inputDias.value   || 1);
+    const t = v * d;
+    totalEl.textContent = "R$ " + t.toLocaleString("pt-BR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  }
+
+  inputValor.addEventListener("input", calcTotal);
+  inputDias.addEventListener("input",  calcTotal);
+
+
+  nomeInput.addEventListener("input", () => {
+    const nome = nomeInput.value.trim();
+    titleEl.textContent = nome || `Extra ${num}`;
+  });
+
+  extrasContainer.appendChild(card);
+  atualizarEstado();
+  atualizarProgress();
+
+  setTimeout(() => nomeInput.focus(), 50);
+}
+
+
+extrasContainer.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-remove]");
+  if (!btn) return;
+  if (document.querySelectorAll(".extra-card").length === 1) return;
+  const card = document.querySelector(`[data-extra-id="${btn.dataset.remove}"]`);
+  if (!card) return;
+  card.style.opacity    = "0";
+  card.style.transform  = "translateY(-8px)";
+  card.style.transition = "opacity .2s, transform .2s";
+  setTimeout(() => { card.remove(); atualizarEstado(); }, 200);
 });
- 
-// ─── MAPA DE CAMPOS CUSTOMIZADOS ─────────────────────────────────────────────
-//
-//  UUIDs mapeados a partir da lista 901327002938.
-//
-//  Notas:
-//    • "Data do Serviço" (5d7cdefb) recebe a string legível "DD/MM/YYYY" (texto).
-//    • "Unidade" (13c4fa90) é tipo labels — envia array de UUIDs da opção.
-//    • Campos currency (Valor, Valor do Evento) recebem o valor decimal direto
-//      (ex.: 100 = R$ 100,00), NÃO centavos.
-//    • "Valor Total" (3900ec9b) é formula — só leitura, não é enviado.
-//
-const FIELD_IDS = {
-  // ── Cabeçalho ──
-  tipoDemanda:      "90e16639-6f23-45b2-b7c9-1c01ac5d2552", // "Tipo de demanda" drop_down
-  unidade:          "13c4fa90-46d1-4ae2-a352-dbf604f574bc", // "Unidade" labels
-  solicitante:      "e8f671fe-9b9b-46fb-b0e7-1d702bfbcaad", // "Nome solicitante" short_text
-  dataServico:      "5d7cdefb-44c8-4da2-bc7f-8d44003fdd69", // "Data do Serviço" date (timestamp ms)
-  dataServicoText:  "da2285b2-82f0-4667-ba7b-98a4e43f26ed", // "Data do Serviço" short_text (DD/MM/YYYY)
-  horario:          "b177b7de-514a-47b7-8e2e-a9ceca5180c9", // "Horário de início" short_text
-  justificativa:    "6a00a137-a96f-4ff8-9b3f-5ef4618a87e8", // "Justificativa" text longo
-  valorEvento:      "ed687ec0-f64e-46d7-a149-004cda5043f3", // "Valor do Evento" currency (centavos)
 
-  // ── Profissional ──
-  nomeProfissional: "4108b928-d271-45c1-94bf-1374184a346c", // "Nome Completo" short_text
-  funcao:           "75be94f3-a544-422f-9525-4954c11f8730", // "Função" drop_down
-  valorDiaria:      "5f8243cd-9d48-4770-b029-88da71b3024a", // "Valor" currency (centavos)
-  qtdDias:          "7535b259-e844-403d-b8a0-a78e4bb951c3", // "Quantidade" number
-  chave_pix:        "a287615a-8e21-45ae-9086-0b5396ede5ba", // "Forma de Pagamento" short_text
-  // "Valor Total" (3900ec9b) é campo formula — calculado automaticamente pelo ClickUp, não enviado
-};
 
-//
-//  Mapeamento texto → UUID da opção para campos do tipo drop_down.
-//
-//  ⚠️  ATENÇÃO: os valores abaixo são PLACEHOLDERS.
-//  Para obter os UUIDs reais, acesse: GET http://localhost:3000/api/campos
-//  Procure pelos campos "Tipo de demanda" e "Função", e copie o "id" de cada
-//  opção dentro de type_config.options[]. Substitua os valores abaixo.
-//
-//  Exemplo de retorno da API ClickUp:
-//    { "id": "abc123-uuid", "name": "Cozinheiro", "orderindex": 1 }
-//                ↑ este "id" é o que deve ser usado como value
-//
-const DROPDOWN_OPTIONS = {
-  // "Tipo de demanda" — 90e16639-6f23-45b2-b7c9-1c01ac5d2552
-  tipoDemanda: {
-    "Evento":  "3bf52cb0-3f21-4d2b-b1f5-efd644a6c083",
-    "Cozinha": "fd7fc7f4-0453-49a7-bbf0-dd99a070869e",
-  },
-
-  // "Função" — 75be94f3-a544-422f-9525-4954c11f8730
-  funcao: {
-    "Garçom":              "32768a6e-a0ec-4990-9e82-390639597464",
-    "Cozinheiro":          "52a6b374-5378-4a0c-b941-f261022b8b6d",
-    "Auxiliar de cozinha": "61da521b-aff1-48fc-983e-79c97ffa2c9a",
-    "Nutricionista":       "39e00bfd-6aa7-4224-9bad-92226401d153",
-    "Auxiliar de serviços":"04c7421e-a8bb-4641-b12c-089c7cbdcd45",
-    "Motorista":           "1ebc219f-e097-4c1b-81b3-01baf70ac233",
-    "Outro":               "91b0f955-d7ae-4152-aec2-e9add0bebe62",
-  },
-};
- 
-// Mapeamento valor → UUID para o campo "Unidade" (tipo labels)
-// A API do ClickUp para labels exige o UUID da opção, não o texto
-const LABEL_IDS = {
-  "RN - Parnamirim":    "dd64cbfc-e8e6-4dc0-b5ad-6e50afd1cd25",
-  "RN - Caicó":         "595aad2b-f5f9-40b2-93c4-e49811673e2f",
-  "RN - Mossoró ":      "ac0d369a-629f-4b2f-91af-0b2ec770cf9c",
-  "PB - João Pessoa":   "2290170a-c511-457d-9c8b-9294e7ca61cc",
-  "PE - Caruaru":       "5ac1bbae-576c-44ec-a8e9-b6dec5397d5c",
-  "SE - São Critovão":  "ade3eb69-cccf-4b04-a70b-41388c07cba8",
-  "SE - Aracaju":       "dd444b2f-c5f9-422c-ac2a-6327c0937583",
-  "PR - Telemaco Borba":"ee43212d-6ad4-4903-9228-d1465ad6d983",
-  "RS - Porto Alegre ": "56ba1a90-7c86-423e-b10c-c789690b1f93",
-  "SP - São Paulo ":    "8110f5e6-6a1e-4b0d-8eef-7fb566b07a3c",
-  "MA - São Luiz":      "f0623c1d-6a48-4bb4-8fe6-669740a65b6b",
-  "AL - Arapiraca":     "7173051b-5bab-460c-9c62-f1d166d9e0dd",
-};
- 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
-
-function dropdownIndex(campo, valor) {
-  const map = DROPDOWN_OPTIONS[campo];
-  if (!map) {
-    console.warn(`[WARN] Mapa não encontrado: ${campo}`);
-    return null;
-  }
-  // ?? null garante que índice 0 retorna 0, e ausente retorna null (nunca undefined)
-  const idx = map[valor] ?? null;
-  if (idx === null) {
-    console.warn(`[WARN] Opção "${valor}" não mapeada em "${campo}"`);
-  }
-  return idx;
+function atualizarEstado() {
+  const cards = document.querySelectorAll(".extra-card");
+  cards.forEach((card, i) => {
+    const n  = i + 1;
+    const av = card.querySelector("[data-avatar]");
+    if (av) { av.textContent = `E${n}`; av.dataset.avatar = n; }
+    const tl   = card.querySelector("[data-title]");
+    const nome = card.querySelector(".extra-nome")?.value?.trim();
+    if (tl && !nome) tl.textContent = `Extra ${n}`;
+  });
+  extrasCount.textContent = cards.length;
 }
 
-function buildCustomFields(dados, extra) {
-  const fields = [];
 
-  const add = (id, value) => {
-    if (id && value !== null && value !== undefined && value !== "") {
-      fields.push({ id, value });
-    }
+function atualizarProgress() {
+  const campos = document.querySelectorAll("input[required], select[required], textarea[required]");
+  let preenchidos = 0;
+  campos.forEach(c => { if (c.value?.trim()) preenchidos++; });
+  const pct = Math.round((preenchidos / campos.length) * 100);
+  progressBar.style.width = pct + "%";
+}
+
+document.addEventListener("input",  atualizarProgress);
+document.addEventListener("change", atualizarProgress);
+
+
+function obterExtras() {
+  return Array.from(document.querySelectorAll(".extra-card")).map(card => ({
+    nome:        card.querySelector(".extra-nome")?.value?.trim()          || "",
+    funcao:      card.querySelector(".extra-funcao")?.value?.trim()        || "",
+
+    valorDiaria: parseFloat(card.querySelector(".extra-valor")?.value      || 0),
+    qtdDias:     parseInt(card.querySelector(".extra-dias")?.value         || 1),
+    pix:         card.querySelector(".extra-pix")?.value?.trim()           || ""
+  }));
+}
+
+function obterPayload() {
+
+  const valorRaw = (document.getElementById("valor")?.value || "0")
+    .replace(/\./g, "")  
+    .replace(",", ".");  
+
+  return {
+    tipoDemanda:   tipoDemanda,
+    unidade:       selectUnidade?.value?.trim()                          || "",
+    solicitante:   document.getElementById("solicitante")?.value?.trim() || "",
+    dataServico:   document.getElementById("data")?.value?.trim()        || "",
+    horario:       document.getElementById("horario")?.value?.trim()     || "",
+    valorEvento:   parseFloat(valorRaw) || 0,
+    justificativa: document.getElementById("justificativa")?.value?.trim() || "",
+    extras:        obterExtras()
   };
-
-  // ── Tipo de demanda (drop_down → orderindex) ──
-  const tipoIdx = dropdownIndex("tipoDemanda", dados.tipoDemanda);
-  if (tipoIdx !== null) add(FIELD_IDS.tipoDemanda, tipoIdx);
-
-  // ── Unidade (labels → array de UUIDs da opção) ──
-  if (dados.unidade) {
-    const labelId = LABEL_IDS[dados.unidade];
-    if (labelId) {
-      fields.push({ id: FIELD_IDS.unidade, value: [labelId] });
-    } else {
-      console.warn(`[WARN] UUID não encontrado para unidade: "${dados.unidade}"`);
-    }
-  }
-
-  // ── Campos de texto do cabeçalho ──
-  add(FIELD_IDS.solicitante,   dados.solicitante);
-  add(FIELD_IDS.horario,       dados.horario);
-  add(FIELD_IDS.justificativa, dados.justificativa);
-
-  // ── Data do Serviço (texto DD/MM/YYYY) ──
-  if (dados.dataServico) {
-    const [y, m, d] = dados.dataServico.split("-");
-    add(FIELD_IDS.dataServico, `${d}/${m}/${y}`);
-  }
-
-  if (dados.tipoDemanda === "Evento" && dados.valorEvento) {
-    add(FIELD_IDS.valorEvento, Math.round(dados.valorEvento * 100) / 100);
-  }
-
-  // ── Nome do profissional ──
-  add(FIELD_IDS.nomeProfissional, extra.nome);
-
-  // ── Função (drop_down → orderindex) ──
-  const funcaoIdx = dropdownIndex("funcao", extra.funcao);
-  if (funcaoIdx !== null) add(FIELD_IDS.funcao, funcaoIdx);
-
-// ── Valor da diária (currency → valor decimal direto) ──
-add(FIELD_IDS.valorDiaria, Math.round((extra.valorDiaria || 0) * 100) / 100);
-
-  // ── Quantidade de dias (number) ──
-  add(FIELD_IDS.qtdDias, Number(extra.qtdDias));
-
-  // ── Chave PIX / Forma de Pagamento (short_text) ──
-  add(FIELD_IDS.chave_pix, extra.pix);
-
-  // Nota: "Valor Total" (3900ec9b) é campo formula — calculado automaticamente,
-  // não é enviado na criação da tarefa.
-
-  return fields;
 }
- 
-/**
- * Monta o nome da tarefa no ClickUp.
- * Exemplo: "[Evento] Garçom — João Silva | Mossoró | 15/06/2025"
- */
-function buildTaskName(dados, extra) {
-  const tipo  = dados.tipoDemanda || "Solicitação";
-  const nome  = extra.nome        || "Profissional";
-  const func  = extra.funcao      || "";
-  const unid  = dados.unidade     || "";
- 
-  let data = "";
-  if (dados.dataServico) {
-    const [y, m, d] = dados.dataServico.split("-");
-    data = `${d}/${m}/${y}`;
+
+function validar(d) {
+  if (!d.unidade)       return ["f-unidade",    "Selecione a unidade."];
+  if (!d.solicitante)   return ["solicitante",   "Informe o nome do solicitante."];
+  if (!d.dataServico)   return ["data",          "Informe a data do serviço."];
+  if (!d.horario)       return ["horario",       "Informe o horário."];
+  if (!d.justificativa) return ["justificativa", "Informe a justificativa."];
+  for (const [i, e] of d.extras.entries()) {
+    const n = i + 1;
+    if (!e.nome)        return [null, `Extra ${n}: informe o nome completo.`];
+    if (!e.funcao)      return [null, `Extra ${n}: selecione a função.`];
+    if (!e.valorDiaria) return [null, `Extra ${n}: informe o valor da diária.`];
+    if (!e.pix)         return [null, `Extra ${n}: informe a chave PIX.`];
   }
- 
-  return `[${tipo}] ${func} — ${nome} | ${unid} | ${data}`;
-}
- 
-/**
- * Monta a descrição rica da tarefa (markdown do ClickUp).
- */
-function buildTaskDescription(dados, extra) {
-  const total = ((extra.valorDiaria || 0) * (extra.qtdDias || 1))
-    .toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
- 
-  const valorEvento = dados.valorEvento
-    ? `R$ ${dados.valorEvento.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
-    : "—";
- 
-  return [
-    `**Tipo de demanda:** ${dados.tipoDemanda}`,
-    `**Unidade:** ${dados.unidade}`,
-    `**Solicitante:** ${dados.solicitante}`,
-    `**Data do serviço:** ${dados.dataServico || "—"}`,
-    `**Horário:** ${dados.horario}`,
-    dados.tipoDemanda === "Evento" ? `**Valor do evento:** ${valorEvento}` : null,
-    ``,
-    `---`,
-    ``,
-    `**Profissional:** ${extra.nome}`,
-    `**Função:** ${extra.funcao}`,
-    `**Valor da diária:** R$ ${(extra.valorDiaria || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
-    `**Quantidade de dias:** ${extra.qtdDias}`,
-    `**Total estimado:** R$ ${total}`,
-    `**Chave PIX:** ${extra.pix}`,
-    ``,
-    `---`,
-    ``,
-    `**Justificativa:**`,
-    dados.justificativa,
-  ]
-    .filter(l => l !== null)
-    .join("\n");
+  return null;
 }
 
 
+function toast(type, title, msg) {
+  const wrap = document.getElementById("toastWrap");
+  const el   = document.createElement("div");
+  el.className = `toast ${type}`;
 
- 
-// ─── BUSCAR CAMPOS DA LISTA (utilitário de configuração) ─────────────────────
-app.get("/api/campos", async (req, res) => {
-  if (!CU_TOKEN || !CU_LIST_ID) {
-    return res.status(500).json({ erro: "CLICKUP_TOKEN ou CLICKUP_LIST_ID não configurados no .env" });
-  }
-  try {
-    const { data } = await clickup.get(`/list/${CU_LIST_ID}/field`);
-    const campos = (data.fields || []).map(f => ({
-      id:      f.id,
-      name:    f.name,
-      type:    f.type,
-      // Para drop_down e labels: lista cada opção com seu UUID e nome
-      options: (f.type_config?.options || []).map(o => ({
-        uuid:       o.id,          // ← use este valor em DROPDOWN_OPTIONS
-        name:       o.name,
-        orderindex: o.orderindex,
-      })),
-    }));
+  const checkIcon = `<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>`;
+  const xIcon     = `<svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
 
-    // Log amigável no servidor para facilitar configuração
-    const dropdowns = campos.filter(c => c.type === "drop_down" && c.options.length > 0);
-    if (dropdowns.length > 0) {
-      console.log("\n📋  UUIDs dos campos drop_down (cole em DROPDOWN_OPTIONS):");
-      dropdowns.forEach(c => {
-        console.log(`\n  Campo: "${c.name}" (${c.id})`);
-        c.options.forEach(o => console.log(`    "${o.name}": "${o.uuid}",`));
-      });
-      console.log("");
+  el.innerHTML = `
+    <div class="toast-icon">${type === "success" ? checkIcon : xIcon}</div>
+    <div class="toast-content">
+      <div class="toast-title">${title}</div>
+      <div class="toast-msg">${msg}</div>
+    </div>
+  `;
+  wrap.appendChild(el);
+  setTimeout(() => {
+    el.classList.add("out");
+    setTimeout(() => el.remove(), 300);
+  }, 5000);
+}
+
+document.getElementById("formSolicitacao").addEventListener("submit", async (e) => {
+  e.preventDefault();
+
+  const dados = obterPayload();
+  const erro  = validar(dados);
+
+  if (erro) {
+    const [fieldId, msg] = erro;
+    if (fieldId) {
+      const el = document.getElementById(fieldId);
+      if (el) {
+        el.classList.add("error");
+        el.focus();
+        setTimeout(() => el.classList.remove("error"), 3000);
+      }
     }
+    toast("error", "Campo obrigatório", msg);
+    return;
+  }
 
-    res.json({ campos });
-  } catch (err) {
-    const detail = err.response?.data || err.message;
-    console.error("[ERROR] GET /api/campos:", detail);
-    res.status(500).json({ erro: "Falha ao buscar campos do ClickUp", detalhe: detail });
+  const btn = document.getElementById("btnSubmit");
+  btn.disabled = true;
+  btn.innerHTML = `
+    <svg class="spin" viewBox="0 0 24 24" style="width:17px;height:17px;stroke:white;fill:none;stroke-width:2;stroke-linecap:round;">
+      <path d="M21 12a9 9 0 11-6.219-8.56"/>
+    </svg>
+    Enviando…
+  `;
+
+try {
+  console.log("ENVIANDO:", JSON.stringify(dados, null, 2));
+
+const res = await fetch(`${BACKEND_URL}/api/solicitacao`, {
+    method:  "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": API_KEY
+    },
+    body:    JSON.stringify(dados)
+  });
+
+
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    const texto = await res.text();
+    console.error("Servidor retornou não-JSON:", texto);
+    toast("error", "Erro no servidor", `Status ${res.status} — veja o console do servidor.`);
+    return;
+  }
+
+  const resultado = await res.json();
+  console.log("RESPOSTA:", resultado);
+
+  if (resultado.success) {
+    toast("success", "Solicitação enviada!", `${resultado.total_criadas} tarefa(s) criada(s) no ClickUp.`);
+    document.getElementById("formSolicitacao").reset();
+    extrasContainer.innerHTML = "";
+    extraIndex = 0;
+    criarExtra();
+    alterarTipo("Evento");
+    progressBar.style.width = "0%";
+  } else {
+    console.error("Erro ClickUp:", resultado);
+    toast("error", "Erro ao enviar", resultado.erro || "Falha ao criar solicitação.");
+  }
+} catch (err) {
+  console.error("Erro de conexão:", err);
+  toast("error", "Falha de conexão", "Não foi possível conectar ao servidor.");
+} finally {
+    btn.disabled = false;
+    btn.innerHTML = `
+      <svg viewBox="0 0 24 24" style="width:17px;height:17px;stroke:white;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;">
+        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </svg>
+      Enviar solicitação
+    `;
   }
 });
- 
-// ─── CRIAR TAREFAS (rota principal) ──────────────────────────────────────────
-app.post("/api/solicitacao", requireApiKey, async (req, res) => {
-  // Verificação de configuração
-  if (!CU_TOKEN || !CU_LIST_ID) {
-    return res.status(500).json({
-      success: false,
-      erro: "Servidor mal configurado: CLICKUP_TOKEN ou CLICKUP_LIST_ID ausentes no .env",
-    });
-  }
- 
-  const dados = req.body;
- 
-  // ── Validação básica ──
-  const erros = [];
-  if (!dados.unidade)       erros.push("unidade");
-  if (!dados.solicitante)   erros.push("solicitante");
-  if (!dados.dataServico)   erros.push("dataServico");
-  if (!dados.horario)       erros.push("horario");
-  if (!dados.justificativa) erros.push("justificativa");
-  if (!Array.isArray(dados.extras) || dados.extras.length === 0) erros.push("extras (vazio)");
- 
-  if (erros.length > 0) {
-    return res.status(400).json({
-      success: false,
-      erro: `Campos obrigatórios ausentes: ${erros.join(", ")}`,
-    });
-  }
- 
-  // ── Processar extras em paralelo ──
-  const resultados = await Promise.allSettled(
-    dados.extras.map(async (extra, i) => {
-      const taskName    = buildTaskName(dados, extra);
-      const description = buildTaskDescription(dados, extra);
-      const customFields = buildCustomFields(dados, extra);
- 
-      const payload = {
-        name:          taskName,
-        description:   description,
-        custom_fields: customFields,
-        // Prioridade padrão: Normal (3). Ajuste se necessário.
-        priority: 3,
-      };
- 
-      console.log(`[INFO] Criando tarefa ${i + 1}: ${taskName}`);
 
-        console.log("PAYLOAD ClickUp:", JSON.stringify({
-        name: taskName,
-        custom_fields: customFields
-      }, null, 2));
-      
- 
-      const { data: task } = await clickup.post(`/list/${CU_LIST_ID}/task`, payload);
- 
-      console.log(`[OK]   Tarefa criada: ${task.id} — ${task.url}`);
- 
-      return {
-        extra:   extra.nome,
-        task_id: task.id,
-        url:     task.url,
-      };
-    })
-  );
-
-
-  // ── Separar sucessos e falhas ──
-  const criadas = [];
-  const falhas  = [];
- 
-  resultados.forEach((r, i) => {
-    if (r.status === "fulfilled") {
-      criadas.push(r.value);
-    } else {
-      const detail = r.reason?.response?.data || r.reason?.message || "Erro desconhecido";
-      console.error(`[ERROR] Extra ${i + 1}:`, detail);
-      falhas.push({
-        extra:   dados.extras[i]?.nome || `Extra ${i + 1}`,
-        erro:    detail,
-      });
-    }
-  });
- 
-  // ── Resposta ──
-  const success = falhas.length === 0;
-  const status  = success ? 200 : falhas.length === dados.extras.length ? 500 : 207;
- 
-  return res.status(status).json({
-    success,
-    total_criadas: criadas.length,
-    total_falhas:  falhas.length,
-    tarefas:       criadas,
-    falhas:        falhas.length > 0 ? falhas : undefined,
-    erro: !success && falhas.length === dados.extras.length
-      ? "Todas as tarefas falharam. Verifique os logs do servidor."
-      : undefined,
-  });
-});
- 
-// ─── HEALTH CHECK ────────────────────────────────────────────────────────────
-app.get("/api/health", (req, res) => {
-  res.json({
-    status:          "ok",
-    token_ok:        !!CU_TOKEN,
-    list_id_ok:      !!CU_LIST_ID,
-    timestamp:       new Date().toISOString(),
-  });
-});
-
-// ─── MIDDLEWARE DE ERRO GLOBAL ────────────────────────────────────────────────
-// Garante que qualquer crash no servidor responda JSON, nunca HTML
-app.use((err, req, res, next) => {
-  console.error("[CRASH]", err.stack || err.message || err);
-  res.status(500).json({
-    success: false,
-    erro: "Erro interno no servidor",
-    detalhe: err.message || String(err),
-  });
-});
- 
-// ─── START ───────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🟢  Servidor rodando em http://localhost:${PORT}`);
-  console.log(`    Health:  GET  http://localhost:${PORT}/api/health`);
-  console.log(`    Campos:  GET  http://localhost:${PORT}/api/campos`);
-  console.log(`    Submit:  POST http://localhost:${PORT}/api/solicitacao\n`);
- 
-  if (!CU_TOKEN)   console.warn("⚠️  CLICKUP_TOKEN não definido no .env");
-  if (!CU_LIST_ID) console.warn("⚠️  CLICKUP_LIST_ID não definido no .env");
-});
+criarExtra();
+btnAddExtra.addEventListener("click", criarExtra);
