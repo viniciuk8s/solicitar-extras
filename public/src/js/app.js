@@ -1,10 +1,35 @@
 // ─── CONFIG ───
 // URL do backend no Render
 const BACKEND_URL = "https://solicitar-extras.onrender.com";
-// Chave compartilhada — DEVE ser igual à env var API_KEY no Render.
-// Atenção: por ser código de front-end, este valor fica visível no navegador.
-// Serve para filtrar abuso casual, não como segredo forte.
-const API_KEY = "pk_118075909_D3FGBXI8950YWXTC5XMY17X0NCJZBUAN";
+
+// Interpreta valores monetários aceitando vírgula OU ponto como separador decimal.
+// "100,50" → 100.5 | "100.50" → 100.5 | "1.234,56" → 1234.56 | "1,234.56" → 1234.56
+function parseValor(str) {
+  if (typeof str === "number") return str;
+  if (!str) return 0;
+  let s = String(str).trim().replace(/[^\d.,]/g, "");
+  if (!s) return 0;
+
+  const hasDot   = s.includes(".");
+  const hasComma = s.includes(",");
+
+  if (hasDot && hasComma) {
+    // ambos presentes: o separador mais à direita é o decimal
+    s = s.lastIndexOf(",") > s.lastIndexOf(".")
+      ? s.replace(/\./g, "").replace(",", ".")   // 1.234,56 (formato BR)
+      : s.replace(/,/g, "");                       // 1,234.56 (formato US)
+  } else if (hasComma) {
+    const parts = s.split(",");
+    s = parts.length === 2 ? parts.join(".") : parts.join(""); // 100,50 vs 1,234,567
+  } else if (hasDot) {
+    const parts = s.split(".");
+    if (parts.length > 2) s = parts.join("");      // 1.234.567 → separadores de milhar
+    // um ponto só → decimal, deixa como está
+  }
+
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
 
 const regioes = {
   "Rio Grande do Norte": [
@@ -123,7 +148,7 @@ function criarExtra() {
         </div>
         <div class="field">
           <label>Valor diária (R$) <span class="req">*</span></label>
-          <input type="number" class="extra-valor" placeholder="0.00" min="0" step="0.01" required>
+          <input type="text" class="extra-valor" inputmode="decimal" placeholder="0,00" required>
         </div>
       </div>
       <div class="extra-row2">
@@ -150,7 +175,7 @@ function criarExtra() {
   const titleEl    = card.querySelector("[data-title]");
 
   function calcTotal() {
-    const v = parseFloat(inputValor.value || 0);
+    const v = parseValor(inputValor.value);
     const d = parseInt(inputDias.value   || 1);
     const t = v * d;
     totalEl.textContent = "R$ " + t.toLocaleString("pt-BR", {
@@ -220,7 +245,7 @@ function obterExtras() {
     nome:        card.querySelector(".extra-nome")?.value?.trim()          || "",
     funcao:      card.querySelector(".extra-funcao")?.value?.trim()        || "",
 
-    valorDiaria: parseFloat(card.querySelector(".extra-valor")?.value      || 0),
+    valorDiaria: parseValor(card.querySelector(".extra-valor")?.value),
     qtdDias:     parseInt(card.querySelector(".extra-dias")?.value         || 1),
     pix:         card.querySelector(".extra-pix")?.value?.trim()           || ""
   }));
@@ -228,17 +253,13 @@ function obterExtras() {
 
 function obterPayload() {
 
-  const valorRaw = (document.getElementById("valor")?.value || "0")
-    .replace(/\./g, "")  
-    .replace(",", ".");  
-
   return {
     tipoDemanda:   tipoDemanda,
     unidade:       selectUnidade?.value?.trim()                          || "",
     solicitante:   document.getElementById("solicitante")?.value?.trim() || "",
     dataServico:   document.getElementById("data")?.value?.trim()        || "",
     horario:       document.getElementById("horario")?.value?.trim()     || "",
-    valorEvento:   parseFloat(valorRaw) || 0,
+    valorEvento:   parseValor(document.getElementById("valor")?.value),
     justificativa: document.getElementById("justificativa")?.value?.trim() || "",
     extras:        obterExtras()
   };
@@ -314,11 +335,11 @@ document.getElementById("formSolicitacao").addEventListener("submit", async (e) 
 
 try {
   console.log("ENVIANDO:", JSON.stringify(dados, null, 2));
+
 const res = await fetch(`${BACKEND_URL}/api/solicitacao`, {
     method:  "POST",
     headers: {
-      "Content-Type": "application/json",
-      "x-api-key": API_KEY
+      "Content-Type": "application/json"
     },
     body:    JSON.stringify(dados)
   });
@@ -345,6 +366,9 @@ const res = await fetch(`${BACKEND_URL}/api/solicitacao`, {
     progressBar.style.width = "0%";
   } else {
     console.error("Erro ClickUp:", resultado);
+    if (resultado.falhas) {
+      console.error("DETALHE DAS FALHAS:\n" + JSON.stringify(resultado.falhas, null, 2));
+    }
     toast("error", "Erro ao enviar", resultado.erro || "Falha ao criar solicitação.");
   }
 } catch (err) {
