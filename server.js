@@ -87,7 +87,8 @@ const clickup = axios.create({
 //  UUIDs mapeados a partir da lista 901327002938.
 //
 //  Notas:
-//    • "Data do Serviço" (5d7cdefb) recebe a string legível "DD/MM/YYYY" (texto).
+//    • "Data do Serviço" (5d7cdefb) é tipo date — recebe timestamp em ms.
+//      A data legível também aparece na descrição da tarefa.
 //    • "Unidade" (13c4fa90) é tipo labels — envia array de UUIDs da opção.
 //    • Campos currency (Valor, Valor do Evento) recebem o valor decimal direto
 //      (ex.: 100 = R$ 100,00), NÃO centavos.
@@ -163,6 +164,16 @@ const LABEL_IDS = {
  
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
+/**
+ * Converte data "YYYY-MM-DD" em timestamp Unix (ms) — exigido por campos tipo date.
+ */
+function dateToTimestamp(dateStr) {
+  if (!dateStr) return null;
+  // T12:00:00Z ancora ao meio-dia UTC — evita regressão de 1 dia em UTC-3
+  const ts = new Date(dateStr + "T12:00:00Z").getTime();
+  return isNaN(ts) ? null : ts;
+}
+
 function dropdownIndex(campo, valor) {
   const map = DROPDOWN_OPTIONS[campo];
   if (!map) {
@@ -205,11 +216,11 @@ function buildCustomFields(dados, extra) {
   add(FIELD_IDS.horario,       dados.horario);
   add(FIELD_IDS.justificativa, dados.justificativa);
 
-  // ── Data do Serviço (texto DD/MM/YYYY) ──
-  if (dados.dataServico) {
-    const [y, m, d] = dados.dataServico.split("-");
-    add(FIELD_IDS.dataServico, `${d}/${m}/${y}`);
-  }
+  // ── Data do Serviço (campo date 5d7cdefb → timestamp em ms) ──
+  // Confirmado via /api/campos: este campo é tipo "date", logo recebe timestamp
+  // em milissegundos (não texto). O ClickUp exibe como data formatada.
+  const ts = dateToTimestamp(dados.dataServico);
+  if (ts) add(FIELD_IDS.dataServico, ts);
 
   if (dados.tipoDemanda === "Evento" && dados.valorEvento) {
     add(FIELD_IDS.valorEvento, Math.round(dados.valorEvento * 100) / 100);
@@ -266,12 +277,18 @@ function buildTaskDescription(dados, extra) {
   const valorEvento = dados.valorEvento
     ? `R$ ${dados.valorEvento.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
     : "—";
+
+  let dataBR = "—";
+  if (dados.dataServico) {
+    const [y, m, d] = dados.dataServico.split("-");
+    dataBR = `${d}/${m}/${y}`;
+  }
  
   return [
     `**Tipo de demanda:** ${dados.tipoDemanda}`,
     `**Unidade:** ${dados.unidade}`,
     `**Solicitante:** ${dados.solicitante}`,
-    `**Data do serviço:** ${dados.dataServico || "—"}`,
+    `**Data do serviço:** ${dataBR}`,
     `**Horário:** ${dados.horario}`,
     dados.tipoDemanda === "Evento" ? `**Valor do evento:** ${valorEvento}` : null,
     ``,
