@@ -43,7 +43,7 @@
 html { font-size: 16px; }
 
 body {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-feature-settings: 'cv02','cv03','cv04','cv11'; /* Inter discretionary ligatures */
   color: var(--ink);
   background: var(--surface-2);
@@ -98,7 +98,7 @@ body {
 }
 
 .hero h1 {
-  font-family: 'Cormorant Garamond', serif;
+  font-family: 'DM Serif Display', serif;
   font-size: clamp(2.25rem, 5vw, 3.25rem);
   font-weight: 300;
   color: #FFFFFF;
@@ -114,7 +114,7 @@ body {
 }
 
 .hero p {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   color: rgba(255,255,255,.38);
   font-size: .875rem;
   font-weight: 300;
@@ -228,7 +228,7 @@ body {
 
 /* título da seção em serif — hierarquia tipográfica clara */
 .section-title {
-  font-family: 'Cormorant Garamond', serif;
+  font-family: 'DM Serif Display', serif;
   font-size: 1.1875rem;
   font-weight: 500;
   color: var(--ink);
@@ -240,7 +240,7 @@ body {
 }
 
 .section-sub {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .75rem;
   color: var(--ink-4);
   font-weight: 400;
@@ -264,7 +264,7 @@ body {
   border-radius: var(--r-md);
   background: var(--surface);
   cursor: pointer;
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .875rem;
   font-weight: 400;
   letter-spacing: -.005em;
@@ -323,7 +323,7 @@ body {
 .field     + .grid-auto { margin-top: 18px; }
 
 label {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .6875rem;
   font-weight: 500;
   color: var(--ink-4);
@@ -346,7 +346,7 @@ input[type="number"],
 input[type="date"],
 select,
 textarea {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .9375rem;
   font-weight: 400;
   color: var(--ink);
@@ -440,7 +440,7 @@ select option   { font-weight: 400; }
   width: 27px; height: 27px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .625rem;
   font-weight: 600;
   border: 1px solid var(--ink-2);
@@ -450,7 +450,7 @@ select option   { font-weight: 400; }
 }
 
 .extra-title {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .8125rem;
   font-weight: 500;
   color: var(--ink-2);
@@ -458,7 +458,7 @@ select option   { font-weight: 400; }
 }
 
 .extra-subtitle {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .6875rem;
   color: var(--ink-4);
   font-weight: 400;
@@ -495,7 +495,7 @@ select option   { font-weight: 400; }
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .6875rem;
   font-weight: 500;
   color: var(--ink-4);
@@ -507,7 +507,7 @@ select option   { font-weight: 400; }
 }
 
 .extra-total strong {
-  font-family: 'Cormorant Garamond', serif;
+  font-family: 'DM Serif Display', serif;
   font-size: 1.0625rem;
   font-weight: 600;
   color: var(--ink-2);
@@ -527,7 +527,7 @@ select option   { font-weight: 400; }
   border: 1px dashed var(--border-2);
   border-radius: var(--r-md);
   color: var(--ink-4);
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .8125rem;
   font-weight: 500;
   letter-spacing: .01em;
@@ -562,7 +562,7 @@ select option   { font-weight: 400; }
 }
 
 .footer-note {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .75rem;
   color: var(--ink-4);
   font-weight: 400;
@@ -582,7 +582,7 @@ select option   { font-weight: 400; }
   color: #FFFFFF;
   border: none;
   border-radius: var(--r-md);
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .875rem;
   font-weight: 500;
   letter-spacing: .01em;
@@ -652,7 +652,7 @@ select option   { font-weight: 400; }
 
 .toast-content { flex: 1; }
 .toast-title {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-weight: 600;
   font-size: .8125rem;
   color: var(--ink);
@@ -660,7 +660,7 @@ select option   { font-weight: 400; }
   letter-spacing: -.005em;
 }
 .toast-msg {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   color: var(--ink-3);
   font-weight: 400;
   font-size: .75rem;
@@ -678,7 +678,7 @@ select option   { font-weight: 400; }
   border-radius: 100px;
   background: var(--navy);
   color: white;
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   font-size: .625rem;
   font-weight: 600;
   margin-left: 8px;
