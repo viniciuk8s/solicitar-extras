@@ -636,6 +636,34 @@ async function montarRenumeracao() {
 }
 
 
+// ─── DEBUG: inspeciona custom_fields das primeiras tarefas ───────────────────
+app.get("/api/debug-tasks", async (req, res) => {
+  try {
+    const { data } = await clickup.get(`/list/${CU_LIST_ID}/task`, {
+      params: { page: 0, include_closed: true, subtasks: false },
+    });
+    const tasks = (data.tasks || []).slice(0, 3).map(t => ({
+      id:           t.id,
+      name:         t.name,
+      date_created: t.date_created,
+      custom_fields: (t.custom_fields || []).map(f => ({
+        id:    f.id,
+        name:  f.name,
+        type:  f.type,
+        value: f.value,
+      })),
+    }));
+    res.json({
+      unidade_field_id_esperado: FIELD_IDS.unidade,
+      label_ids: LABEL_IDS,
+      contadores_atuais: contadores,
+      tasks,
+    });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
 app.get("/api/health", (req, res) => {
   res.json({
     status:          "ok",
