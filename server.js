@@ -519,7 +519,123 @@ app.post("/api/solicitacao", requireApiKey, async (req, res) => {
   });
 });
  
-// ─── HEALTH CHECK ────────────────────────────────────────────────────────────
+// ─── RENUMERAR TAREFAS EXISTENTES ────────────────────────────────────────────
+//
+//  GET  /api/renumerar        → simulação (mostra o que seria renomeado, sem alterar)
+//  POST /api/renumerar        → executa a renumeração de todas as tarefas
+//
+//  Lógica: para cada unidade, busca todas as tarefas que a possuem,
+//  ordena por data de criação (mais antiga primeiro) e renomeia
+//  para "001 - Solicitação Evento", "002 - Solicitação Cozinha", etc.
+//
+app.get("/api/renumerar", async (req, res) => {
+  try {
+    const preview = await montarRenumeracao();
+    res.json({ simulacao: true, total: preview.length, tarefas: preview });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+app.post("/api/renumerar", requireApiKey, async (req, res) => {
+  try {
+    const plano = await montarRenumeracao();
+    const resultados = [];
+
+    for (const item of plano) {
+      try {
+        await clickup.put(`/task/${item.id}`, { name: item.novoNome });
+        console.log(`[RENUMERAR] ${item.nomeAtual} → ${item.novoNome}`);
+        resultados.push({ id: item.id, de: item.nomeAtual, para: item.novoNome, ok: true });
+      } catch (err) {
+        console.error(`[RENUMERAR] Falha ${item.id}:`, err.message);
+        resultados.push({ id: item.id, de: item.nomeAtual, para: item.novoNome, ok: false, erro: err.message });
+      }
+    }
+
+    // Ressincroniza contadores em memória após renumeração
+    await inicializarContadores();
+
+    const ok    = resultados.filter(r => r.ok).length;
+    const falha = resultados.filter(r => !r.ok).length;
+    res.json({ total: resultados.length, renomeadas: ok, falhas: falha, resultados });
+  } catch (err) {
+    res.status(500).json({ erro: err.message });
+  }
+});
+
+/**
+ * Monta o plano de renumeração: busca todas as tarefas, agrupa por unidade,
+ * ordena por data de criação e calcula o novo nome sequencial para cada uma.
+ */
+async function montarRenumeracao() {
+  // Inverte LABEL_IDS para buscar unidade a partir do UUID do label
+  const labelParaUnidade = Object.fromEntries(
+    Object.entries(LABEL_IDS).map(([unidade, uuid]) => [uuid, unidade])
+  );
+
+  // 1. Buscar todas as tarefas com paginação
+  const todasTarefas = [];
+  let page = 0;
+  while (true) {
+    const { data } = await clickup.get(`/list/${CU_LIST_ID}/task`, {
+      params: { page, include_closed: true, subtasks: false },
+    });
+    const tasks = data.tasks || [];
+    todasTarefas.push(...tasks);
+    if (data.last_page || tasks.length === 0) break;
+    page++;
+  }
+
+  // 2. Agrupar por unidade
+  const porUnidade = {};
+  for (const task of todasTarefas) {
+    const campo = (task.custom_fields || []).find(f => f.id === FIELD_IDS.unidade);
+    const valores = Array.isArray(campo?.value) ? campo.value : [];
+    let unidade = null;
+    for (const v of valores) {
+      const uuid = typeof v === "string" ? v : v?.id;
+      unidade = labelParaUnidade[uuid] || null;
+      if (unidade) break;
+    }
+    if (!unidade) unidade = "__sem_unidade__";
+    if (!porUnidade[unidade]) porUnidade[unidade] = [];
+    porUnidade[unidade].push(task);
+  }
+
+  // 3. Para cada unidade, ordenar por data de criação e montar novo nome
+  const plano = [];
+  for (const [unidade, tasks] of Object.entries(porUnidade)) {
+    if (unidade === "__sem_unidade__") continue;
+
+    // Ordena do mais antigo para o mais novo
+    tasks.sort((a, b) => Number(a.date_created) - Number(b.date_created));
+
+    tasks.forEach((task, i) => {
+      const seq = String(i + 1).padStart(3, "0");
+
+      // Detecta tipo pelo nome atual ou pelo campo tipoDemanda
+      const campTipo = (task.custom_fields || []).find(f => f.id === FIELD_IDS.tipoDemanda);
+      const tipoOpts = DROPDOWN_OPTIONS.tipoDemanda;
+      let tipo = "Solicitação";
+      if (campTipo?.value !== null && campTipo?.value !== undefined) {
+        const match = Object.entries(tipoOpts).find(([, uuid]) => uuid === campTipo.value);
+        if (match) tipo = match[0]; // "Evento" ou "Cozinha"
+      } else if (task.name?.toLowerCase().includes("cozinha")) {
+        tipo = "Cozinha";
+      } else if (task.name?.toLowerCase().includes("evento")) {
+        tipo = "Evento";
+      }
+
+      const novoNome = `${seq} - Solicitação ${tipo}`;
+      plano.push({ id: task.id, nomeAtual: task.name, novoNome, unidade });
+    });
+  }
+
+  return plano;
+}
+
+
 app.get("/api/health", (req, res) => {
   res.json({
     status:          "ok",
