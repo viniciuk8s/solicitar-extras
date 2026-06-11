@@ -216,9 +216,11 @@ function buildCustomFields(dados, extra) {
   add(FIELD_IDS.horario,       dados.horario);
   add(FIELD_IDS.justificativa, dados.justificativa);
 
-  // ── Data do Serviço ──
-  // NÃO é enviada aqui: o campo date (5d7cdefb) é setado após a criação,
-  // via endpoint dedicado de custom field, que é mais confiável para datas.
+  // ── Data do Serviço (campo date 5d7cdefb → timestamp em ms) ──
+  // Confirmado via /api/campos: este campo é tipo "date", logo recebe timestamp
+  // em milissegundos (não texto). O ClickUp exibe como data formatada.
+  const ts = dateToTimestamp(dados.dataServico);
+  if (ts) add(FIELD_IDS.dataServico, ts);
 
   if (dados.tipoDemanda === "Evento" && dados.valorEvento) {
     add(FIELD_IDS.valorEvento, Math.round(dados.valorEvento * 100) / 100);
@@ -248,22 +250,87 @@ add(FIELD_IDS.valorDiaria, Math.round((extra.valorDiaria || 0) * 100) / 100);
  
 /**
  * Monta o nome da tarefa no ClickUp.
- * Exemplo: "[Evento] Garçom — João Silva | Mossoró | 15/06/2025"
+ * Exemplo: "007 - Solicitação Evento"
  */
-function buildTaskName(dados, extra) {
-  const tipo  = dados.tipoDemanda || "Solicitação";
-  const nome  = extra.nome        || "Profissional";
-  const func  = extra.funcao      || "";
-  const unid  = dados.unidade     || "";
- 
-  let data = "";
-  if (dados.dataServico) {
-    const [y, m, d] = dados.dataServico.split("-");
-    data = `${d}/${m}/${y}`;
-  }
- 
-  return `[${tipo}] ${func} — ${nome} | ${unid} | ${data}`;
+function buildTaskName(dados, extra, numero) {
+  const tipo = dados.tipoDemanda || "Solicitação";
+  const seq  = String(numero).padStart(3, "0");
+  return `${seq} - Solicitação ${tipo}`;
 }
+
+/**
+ * ─── CONTADOR EM MEMÓRIA POR UNIDADE ─────────────────────────────────────────
+ *
+ * Lê todas as tarefas da lista UMA VEZ ao iniciar o servidor e monta um mapa
+ * { "PE - Caruaru": 7, "RN - Parnamirim": 3, ... }.
+ * A cada nova tarefa criada, incrementa atomicamente o contador da unidade.
+ *
+ * Vantagens:
+ *  - Não faz chamada extra ao ClickUp a cada requisição
+ *  - Não depende do formato de retorno dos custom_fields
+ *  - JavaScript é single-thread → sem race condition no incremento
+ *
+ * Atenção: se tarefas forem criadas/excluídas diretamente no ClickUp enquanto
+ * o servidor estiver rodando, reinicie o servidor para ressincronizar.
+ */
+
+const contadores = {};   // { "PE - Caruaru": 7, ... }
+let   contadoresOk = false;
+
+async function inicializarContadores() {
+  console.log("[INFO] Lendo tarefas existentes para montar contadores por unidade…");
+
+  // Inverte LABEL_IDS para buscar unidade a partir do UUID do label
+  const labelParaUnidade = Object.fromEntries(
+    Object.entries(LABEL_IDS).map(([unidade, uuid]) => [uuid, unidade])
+  );
+
+  let page = 0;
+  let total = 0;
+
+  while (true) {
+    const { data } = await clickup.get(`/list/${CU_LIST_ID}/task`, {
+      params: { page, include_closed: true, subtasks: false },
+    });
+
+    const tasks = data.tasks || [];
+    total += tasks.length;
+
+    for (const task of tasks) {
+      const campo = (task.custom_fields || []).find(f => f.id === FIELD_IDS.unidade);
+      if (!campo || !campo.value) continue;
+
+      const valores = Array.isArray(campo.value) ? campo.value : [];
+
+      for (const v of valores) {
+        // ClickUp pode retornar o label como string UUID ou como objeto { id, label }
+        const uuid    = typeof v === "string" ? v : v?.id;
+        const unidade = labelParaUnidade[uuid];
+        if (unidade) {
+          contadores[unidade] = (contadores[unidade] || 0) + 1;
+        }
+      }
+    }
+
+    if (data.last_page || tasks.length === 0) break;
+    page++;
+  }
+
+  contadoresOk = true;
+  console.log(`[INFO] Contadores prontos (${total} tarefas lidas):`, contadores);
+}
+
+/**
+ * Retorna o próximo número sequencial para a unidade e já incrementa.
+ * Thread-safe: JS é single-thread, não há race condition.
+ */
+function proximoNumero(unidade) {
+  contadores[unidade] = (contadores[unidade] || 0) + 1;
+  return contadores[unidade];
+}
+
+
+
  
 /**
  * Monta a descrição rica da tarefa (markdown do ClickUp).
@@ -377,10 +444,16 @@ app.post("/api/solicitacao", requireApiKey, async (req, res) => {
     });
   }
  
+  // ── Pré-alocar números sequenciais para todos os extras desta requisição ──
+  // proximoNumero() é síncrono e atômico — sem race condition mesmo em paralelo
+  const numeros = dados.extras.map(() => proximoNumero(dados.unidade));
+  console.log(`[INFO] Números alocados para "${dados.unidade}":`, numeros);
+
   // ── Processar extras em paralelo ──
   const resultados = await Promise.allSettled(
     dados.extras.map(async (extra, i) => {
-      const taskName    = buildTaskName(dados, extra);
+      const numero      = numeros[i];
+      const taskName    = buildTaskName(dados, extra, numero);
       const description = buildTaskDescription(dados, extra);
       const customFields = buildCustomFields(dados, extra);
  
@@ -403,22 +476,6 @@ app.post("/api/solicitacao", requireApiKey, async (req, res) => {
       const { data: task } = await clickup.post(`/list/${CU_LIST_ID}/task`, payload);
  
       console.log(`[OK]   Tarefa criada: ${task.id} — ${task.url}`);
-
-      // ── Setar a Data do Serviço (campo date) via endpoint dedicado ──
-      // Mais confiável que enviar na criação. Timestamp em ms; time:false = só data.
-      const ts = dateToTimestamp(dados.dataServico);
-      if (ts) {
-        try {
-          await clickup.post(`/task/${task.id}/field/${FIELD_IDS.dataServico}`, {
-            value: ts,
-            value_options: { time: false },
-          });
-          console.log(`[OK]   Data setada na tarefa ${task.id}`);
-        } catch (e) {
-          console.warn(`[WARN] Falha ao setar data na tarefa ${task.id}:`,
-            e.response?.data || e.message);
-        }
-      }
  
       return {
         extra:   extra.nome,
@@ -468,8 +525,14 @@ app.get("/api/health", (req, res) => {
     status:          "ok",
     token_ok:        !!CU_TOKEN,
     list_id_ok:      !!CU_LIST_ID,
+    contadores_ok:   contadoresOk,
     timestamp:       new Date().toISOString(),
   });
+});
+
+// ─── CONTADORES (diagnóstico) ─────────────────────────────────────────────────
+app.get("/api/contadores", (req, res) => {
+  res.json({ contadoresOk, contadores });
 });
 
 // ─── MIDDLEWARE DE ERRO GLOBAL ────────────────────────────────────────────────
@@ -484,7 +547,7 @@ app.use((err, req, res, next) => {
 });
  
 // ─── START ───────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`\n🟢  Servidor rodando em http://localhost:${PORT}`);
   console.log(`    Health:  GET  http://localhost:${PORT}/api/health`);
   console.log(`    Campos:  GET  http://localhost:${PORT}/api/campos`);
@@ -492,4 +555,13 @@ app.listen(PORT, () => {
  
   if (!CU_TOKEN)   console.warn("⚠️  CLICKUP_TOKEN não definido no .env");
   if (!CU_LIST_ID) console.warn("⚠️  CLICKUP_LIST_ID não definido no .env");
+
+  if (CU_TOKEN && CU_LIST_ID) {
+    try {
+      await inicializarContadores();
+    } catch (err) {
+      console.error("⚠️  Falha ao inicializar contadores:", err.message);
+      console.warn("    Numeração começará do zero — reinicie o servidor para ressincronizar.");
+    }
+  }
 });
